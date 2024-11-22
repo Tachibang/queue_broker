@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
@@ -14,6 +15,11 @@ var (
 )
 
 func main() {
+	port := "80"
+	if len(os.Args) > 1 {
+		port = os.Args[1]
+	}
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPut:
@@ -25,8 +31,7 @@ func main() {
 		}
 	})
 
-	log.Println("Server starting")
-	if err := http.ListenAndServe(":80", nil); err != nil {
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -36,7 +41,7 @@ func handlePut(w http.ResponseWriter, r *http.Request) {
 	value := r.URL.Query().Get("v")
 
 	if key == "" || value == "" {
-		http.Error(w, "Key is required in URL path", http.StatusBadRequest)
+		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
 
