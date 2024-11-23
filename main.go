@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
 var (
-	dataStore = make(map[string][]string)
-	waiters   = make(map[string][]chan string)
+	dataStore sync.Map
+	waiters   sync.Map
 )
 
 func main() {
@@ -45,22 +46,24 @@ func handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	val, ok := waiters[key]
-	if ok && len(val) > 0 {
-		ch := val[0]
-		waiters[key] = val[1:]
+	val, _ := waiters.LoadOrStore(key, []chan string{})
+	waitersSlice := val.([]chan string)
+
+	if len(waitersSlice) > 0 {
+		ch := waitersSlice[0]
+		waiters.Store(key, waitersSlice[1:])
 		ch <- value
 		return
 	}
 
-	dataStore[key] = append(dataStore[key], value)
+	val, _ = dataStore.LoadOrStore(key, []string{})
+	dataStore.Store(key, append(val.([]string), value))
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprint(w, dataStore[key])
+	fmt.Fprint(w, val.([]string))
 }
 
 func handleGet(w http.ResponseWriter, r *http.Request) {
-
 	key := r.URL.Path[1:]
 	timeoutStr := r.URL.Query().Get("timeout")
 	var timeout time.Duration
@@ -71,34 +74,43 @@ func handleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	value, ok := dataStore[key]
-	if ok && len(value) > 0 {
-		val := value[0]
-		dataStore[key] = value[1:]
-		fmt.Fprint(w, val)
+	val, _ := dataStore.LoadOrStore(key, []string{})
+	value := val.([]string)
+
+	if len(value) > 0 {
+		result := value[0]
+		dataStore.Store(key, value[1:])
+		fmt.Fprint(w, result)
 		return
 	}
 
 	if timeout > 0 {
 		ch := make(chan string)
 
-		waiters[key] = append(waiters[key], ch)
+		val, _ := waiters.LoadOrStore(key, []chan string{})
+		waitersSlice := val.([]chan string)
+		waiters.Store(key, append(waitersSlice, ch))
 
 		select {
-		case val := <-ch:
+		case result := <-ch:
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, val)
+			fmt.Fprint(w, result)
 		case <-time.After(timeout):
 			w.WriteHeader(http.StatusNotFound)
 		}
 
-		for i, waiter := range waiters[key] {
+		val, _ = waiters.LoadOrStore(key, []chan string{})
+		waitersSlice = val.([]chan string)
+
+		for i, waiter := range waitersSlice {
 			if waiter == ch {
-				waiters[key] = append(waiters[key][:i], waiters[key][i+1:]...)
+				waitersSlice = append(waitersSlice[:i], waitersSlice[i+1:]...)
 				break
 			}
 		}
+		waiters.Store(key, waitersSlice)
 		return
 	}
+
 	http.Error(w, "", http.StatusNotFound)
 }
